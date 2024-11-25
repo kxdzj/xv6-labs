@@ -44,9 +44,6 @@ int matchstar(int c, char *re, char *text)
   return 0;
 }
 
-
-
-
 void find(char *path, char *pattern) {
     char buf[512];
     char *p;
