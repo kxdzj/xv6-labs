@@ -6,7 +6,7 @@
 
 int main(int argc, char const *argv[]){
     if(argc != 1){
-      fprintf(2, "usege:ping pong\n");
+      fprintf(2, "usage:ping pong\n");
       exit(1);
     }
     // 创建两个管道 
