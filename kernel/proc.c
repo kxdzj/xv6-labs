@@ -127,6 +127,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->trace_mask = 0;
+
   return p;
 }
 
@@ -290,6 +292,8 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  np->trace_mask = p->trace_mask;
 
   pid = np->pid;
 
@@ -692,4 +696,35 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// Set the process's trace mask.
+
+uint64
+count_proc(void){
+  uint64 count_proc = 0;
+  struct proc *p;
+  for(p = proc; p < &proc[NPROC]; p++){
+    // acquire(&p->lock);
+    if(p->state != UNUSED){
+      count_proc++;
+    }
+    // release(&p->lock);
+  }
+  return count_proc;
+}
+
+uint64
+calc_loadavg(void){
+  uint64 loadavg = 0;
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    // acquire(&p->lock);
+    if(p->state == RUNNABLE || p->state == RUNNING){
+      loadavg++;
+    }
+    // release(&p->lock);
+  }
+  return loadavg;
 }

@@ -120,6 +120,42 @@ void testproc() {
   }
 }
 
+void testloadavg() {
+  struct sysinfo info;
+  uint64 base_load;
+
+  sinfo(&info);
+  base_load = info.loadavg;
+
+  int pid = fork();
+  if (pid < 0) {
+      printf("FAIL: fork failed\n");
+      exit(1);
+  }
+  if (pid == 0) {
+      while (1) {} // 子进程持续运行，模拟负载
+  }
+
+  sleep(10); // 让内核调度一会，更新负载数据
+
+  sinfo(&info);
+
+  if (info.loadavg <= base_load) {
+      printf("FAIL: loadavg did not increase, base: %d, now: %d\n", base_load, info.loadavg);
+      kill(pid);
+      exit(1);
+  }
+
+  kill(pid);
+  wait(0);
+
+  sinfo(&info);
+  if (info.loadavg != base_load) {
+      printf("FAIL: loadavg did not reset after process exit, expected: %d, got: %d\n", base_load, info.loadavg);
+      exit(1);
+  }
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -127,6 +163,7 @@ main(int argc, char *argv[])
   testcall();
   testmem();
   testproc();
+  testloadavg();
   printf("sysinfotest: OK\n");
   exit(0);
 }
