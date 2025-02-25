@@ -3,6 +3,10 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
+#include "kernel/fs.h"
+#include "kernel/param.h"
+#include "kernel/stat.h"
+
 
 // Parsed command representation
 #define EXEC  1
@@ -52,6 +56,32 @@ struct backcmd {
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
+
+// 比较字符串前 n 个字符
+int strncmp(const char *s1, const char *s2, int n) {
+  while (n > 0 && *s1 && (*s1 == *s2)) {
+      s1++;
+      s2++;
+      n--;
+  }
+  if (n == 0) {
+      return 0;
+  }
+  return (unsigned char)*s1 - (unsigned char)*s2;
+}
+
+
+int isatty(int fd) {
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+      return 0; // 不是有效的文件描述符
+  }
+  // 在 xv6 中，终端通常为 "console" 设备
+  if (st.type == T_DEVICE && st.dev == 1) {
+      return 1; // 是终端设备
+  }
+  return 0;
+}
 
 // Execute cmd.  Never returns.
 void
@@ -130,12 +160,45 @@ runcmd(struct cmd *cmd)
   exit(0);
 }
 
+void autocomplete(char *buf) {
+  char *path[] = {".", "/bin", 0};
+  struct dirent de;
+  struct stat st;
+  char prefix[100];
+  int len = strlen(buf);
+
+  if (len == 0) return;
+
+  strcpy(prefix, buf);
+  
+  for (int i = 0; path[i] != 0; i++) {
+      int fd = open(path[i], O_RDONLY);
+      if (fd < 0) continue;
+
+      while (read(fd, &de, sizeof(de)) == sizeof(de)) {
+          if (de.inum == 0) continue;
+          if (stat(de.name, &st) < 0) continue;
+          if (strncmp(prefix, de.name, len) == 0) {
+              printf("%s\n", de.name);
+          }
+      }
+      close(fd);
+  }
+}
+
 int
 getcmd(char *buf, int nbuf)
 {
-  fprintf(2, "$ ");
+  if(isatty(0))
+    fprintf(2, "$ ");
+
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
+
+  if (buf[0] == '\t') { // 检测 Tab 键
+    autocomplete(buf);
+    return -1;
+  }
   if(buf[0] == 0) // EOF
     return -1;
   return 0;

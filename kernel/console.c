@@ -191,4 +191,6 @@ consoleinit(void)
   // to consoleread and consolewrite.
   devsw[CONSOLE].read = consoleread;
   devsw[CONSOLE].write = consolewrite;
+
+  devsw[CONSOLE].major = 1; // 添加这一行
 }

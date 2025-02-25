@@ -33,6 +33,7 @@ struct inode {
 struct devsw {
   int (*read)(int, uint64, int);
   int (*write)(int, uint64, int);
+  int major;
 };
 
 extern struct devsw devsw[];
