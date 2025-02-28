@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h" 
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -21,38 +23,26 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
-  kernel_pagetable = (pagetable_t) kalloc();
-  memset(kernel_pagetable, 0, PGSIZE);
-
-  // uart registers
-  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // CLINT
-  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
-  // map kernel text executable and read-only.
-  kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
-
-  // map kernel data and the physical RAM we'll make use of.
-  kvmmap((uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
-
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
-  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  kernel_pagetable = kvm_pgtbl_init();
+  ukvmmap(kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
 }
 
-// Switch h/w page table register to the kernel's page table,
+// Switch h/w XV6 page table register to the kernel's page table,
 // and enable paging.
 void
 kvminithart()
 {
   w_satp(MAKE_SATP(kernel_pagetable));
+  sfence_vma();
+}
+
+
+// switch to the process kernel page table, and set up the
+// hardware to use the kernel page table.
+void
+kernel_proc_inithart(pagetable_t pagetable)
+{
+  w_satp(MAKE_SATP(pagetable));
   sfence_vma();
 }
 
@@ -126,13 +116,13 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
 // addresses on the stack.
 // assumes va is page aligned.
 uint64
-kvmpa(uint64 va)
+kvmpa(pagetable_t pgtbl, uint64 va)
 {
   uint64 off = va % PGSIZE;
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(pgtbl, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -379,6 +369,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
+  
+  return copyin_new(pagetable, dst, srcva, len);
   uint64 n, va0, pa0;
 
   while(len > 0){
@@ -405,6 +397,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
+  return copyinstr_new(pagetable, dst, srcva, max);
   uint64 n, va0, pa0;
   int got_null = 0;
 
@@ -471,3 +464,81 @@ vmprint(pagetable_t pagetable)
   printf("page table %p\n", pagetable);
   return pagetableprint(pagetable, 0);
 }
+
+//  映射进程独立的内核页表
+void 
+ukvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm){
+    if(mappages(pagetable, va, sz, pa, perm) != 0)
+        panic("ukvmmap");
+}
+
+// Create a kernel page table for the process
+pagetable_t
+kvm_pgtbl_init(){
+    pagetable_t pagetable;
+    pagetable = (pagetable_t) kalloc();
+    if(pagetable == 0)
+        return 0;
+    memset(pagetable, 0, PGSIZE);
+    ukvmmap(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+    ukvmmap(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+    // CLINT  
+    // ukvmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+    
+    ukvmmap(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+    ukvmmap(pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+    ukvmmap(pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+    ukvmmap(pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+    return pagetable;
+}
+
+
+void
+proc_freekernelpt(pagetable_t pagetable)
+{
+  for(int i = 0; i<512; i++){
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V){
+      pagetable[i] = 0;
+      if((pte & (PTE_R | PTE_W | PTE_X)) == 0){
+        uint64 child = PTE2PA(pte);
+        proc_freekernelpt((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)pagetable);
+} 
+
+
+// Copy from user to kernel.
+int
+u2kvmcopy(pagetable_t src, pagetable_t dst, uint64 start, uint64 new)
+{
+  pte_t *pte_from, *pte_to;
+  start = PGROUNDUP(start);
+  for (uint64 i = start; i < new; i += PGSIZE){
+    if((pte_from = walk(src, i, 0)) == 0)
+      panic("u2kvmcopy: src pte does not exist");
+    if((pte_to = walk(dst, i, 1)) == 0)
+      panic("u2kvmcopy: pte walk failed");
+    uint64 pa = PTE2PA(*pte_from);
+    uint flags = (PTE_FLAGS(*pte_from)) & (~PTE_U);
+    *pte_to = PA2PTE(pa) | flags;
+  }
+  return 0;
+}
+
+// uint64
+// kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz){
+
+//   if(newsz >= oldsz)
+//     return oldsz;
+
+//   if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+//     int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+//     uvmunmap(pagetable, PGROUNDUP(newsz), npages, 0);
+//   }
+
+//   return newsz;
+// }

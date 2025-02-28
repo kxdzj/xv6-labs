@@ -1,0 +1,3 @@
+va 0x00000000 => pa 0x0000000087f61000 flags V | R | W | X | U
+va 0x00001000 => pa 0x0000000087f5e000 flags V | R | W | U
+va 0x00002000 => pa 0x0000000087f5d000 flags V | R | W | X | U

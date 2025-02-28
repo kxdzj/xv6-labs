@@ -92,6 +92,9 @@ int             fork(void);
 int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
+
+
+
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
@@ -160,7 +163,7 @@ int             uartgetc(void);
 // vm.c
 void            kvminit(void);
 void            kvminithart(void);
-uint64          kvmpa(uint64);
+uint64          kvmpa(pagetable_t, uint64);
 void            kvmmap(uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
@@ -179,6 +182,21 @@ int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             vmprint(pagetable_t);
+pagetable_t     kvm_pgtbl_init(); // 内核页表初始化
+void            ukvmmap(pagetable_t, uint64, uint64, uint64, int );
+void            kernel_proc_inithart(pagetable_t); // 切换到进程独立的内核页表
+void            proc_freekernelpt(pagetable_t); // Free the kernel page table
+// 复制映射函数
+int            u2kvmcopy(pagetable_t, pagetable_t, uint64, uint64);
+uint64          kvmdealloc(pagetable_t, uint64, uint64);
+
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
+
+
+
+
+
 
 // plic.c
 void            plicinit(void);
