@@ -121,6 +121,7 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +132,16 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+void
+backtrace(){
+  printf("backtrace:\n");
+  uint64 fp = r_fp(); // 当前函数栈指针
+  // 检查 fp 是否在一个有效的页面
+  while( PGROUNDUP(fp) - PGROUNDDOWN(fp) == PGSIZE){ // 防止访问非法地址，确保栈帧在有效内存范围内
+    uint64 ret_addr = *(uint64*)(fp - 8);
+    printf("%p\n", ret_addr);
+    fp = *(uint64*)(fp - 16);
+  }
 }
