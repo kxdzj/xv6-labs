@@ -236,7 +236,7 @@ userinit(void)
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
 int
-growproc(int n)
+growproc(int n)  // 调整进程空间大小
 {
   uint sz;
   struct proc *p = myproc();
