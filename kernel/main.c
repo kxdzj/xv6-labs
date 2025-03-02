@@ -13,6 +13,7 @@ main()
   if(cpuid() == 0){
     consoleinit();
     printfinit();
+    // load_symbols();  // 加载符号表
     printf("\n");
     printf("xv6 kernel is booting\n");
     printf("\n");

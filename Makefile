@@ -57,6 +57,14 @@ OBJS += \
 	$K/pci.o
 endif
 
+KERNEL_SYM = kernel.sym
+
+$(KERNEL_SYM): $K/kernel
+	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $(KERNEL_SYM)
+
+$K/kernel: $(OBJS) $K/kernel.ld $U/initcode $(KERNEL_SYM)
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+	$(OBJCOPY) --add-section .kernelsym=$(KERNEL_SYM) --set-section-flags .kernelsym=readonly $K/kernel
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin

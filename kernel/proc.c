@@ -122,7 +122,7 @@ found:
   p->is_alarming = 0;
   p->alarm_interval = 0;
   p->alarm_handler = 0;
-  p->ticks_count = 0;
+  p->alarm_ticks = 0;
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -159,7 +159,7 @@ freeproc(struct proc *p)
   p->is_alarming = 0;
   p->alarm_interval = 0;
   p->alarm_handler = 0;
-  p->ticks_count = 0;
+  p->alarm_ticks = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
