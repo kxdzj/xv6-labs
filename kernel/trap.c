@@ -70,30 +70,12 @@ usertrap(void)
     // 查看r_scause()的返回值是否为13或15来判断该错误是否为页面错误
   } else if(r_scause() == 13 || r_scause() == 15) {
     uint64 wrong_addr = r_stval(); 
-    char* pa;
-    if (wrong_addr >= PGROUNDUP(p->trapframe->sp) - 1 && wrong_addr < p->sz) {
-      if ((pa = kalloc()) == 0) {  // **kalloc 失败**
-        p->killed = 1;
-      } else { // 下面是原来growproc中调用uvmalloc的内部实现
-        /*
-        memset(mem, 0, PGSIZE);
-        if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
-          kfree(mem);
-          uvmdealloc(pagetable, a, oldsz);
-          return 0;
-        }
-          */
-        memset(pa, 0, PGSIZE);
-        if (mappages(p->pagetable, PGROUNDDOWN(wrong_addr), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_X | PTE_U) != 0) {
-          kfree(pa);
-          p->killed = 1;
-        }
-      }
-    } else {
+    if(uvmIslazy(wrong_addr))   uvmLazyMaping(wrong_addr); 
+    else {
       // 地址非法，直接杀死进程
       printf("usertrap: illegal access at %p (pid=%d)\n", wrong_addr, p->pid);
       p->killed = 1;
-    }
+    }  
   } else  { // 不是非缺页异常，则抛出错误杀死进程
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

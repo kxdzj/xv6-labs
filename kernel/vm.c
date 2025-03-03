@@ -363,35 +363,6 @@ uvmclear(pagetable_t pagetable, uint64 va)
 
 
 
-// touch a lazy-allocated page so it's mapped to an actual physical page.
-void uvmlazytouch(uint64 va) {
-  struct proc *p = myproc();
-  char *mem = kalloc();
-  if(mem == 0) {
-    // failed to allocate physical memory
-    printf("lazy alloc: out of memory\n");
-    p->killed = 1;
-  } else {
-    memset(mem, 0, PGSIZE);
-    if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
-      printf("lazy alloc: failed to map page\n");
-      kfree(mem);
-      p->killed = 1;
-    }
-  }
-  // printf("lazy alloc: %p, p->sz: %p\n", PGROUNDDOWN(va), p->sz);
-}
-
-// whether a page is previously lazy-allocated and needed to be touched before use.
-int uvmshouldtouch(uint64 va) {
-  pte_t *pte;
-  struct proc *p = myproc();
-  
-  return va < p->sz // within size of memory for the process
-    && PGROUNDDOWN(va) != r_sp() // not accessing stack guard page (it shouldn't be mapped)
-    && (((pte = walk(p->pagetable, va, 0))==0) || ((*pte & PTE_V)==0)); // page table entry does not exist
-}
-
 
 
 // Copy from kernel to user.
@@ -401,7 +372,7 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-  if(uvmshouldtouch(dstva))  uvmlazytouch(dstva);
+  if(uvmIslazy(dstva))  uvmLazyMaping(dstva);
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
@@ -427,7 +398,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
 
-  if(uvmshouldtouch(srcva)) uvmlazytouch(srcva);
+  if(uvmIslazy(srcva)) uvmLazyMaping(srcva);
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
@@ -455,6 +426,7 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
   uint64 n, va0, pa0;
 
+  if(uvmIslazy(srcva)) uvmLazyMaping(srcva);
 
   int got_null = 0;
 
@@ -521,4 +493,49 @@ vmprint(pagetable_t pagetable)
 { 
   printf("page table %p\n", pagetable);
   return pagetableprint(pagetable, 0);
+}
+
+
+// 判断虚拟地址是否是参与懒分配的地址
+int
+uvmIslazy(uint64 va){
+  pte_t *pte;
+  struct proc * p = myproc();
+  // 地址是否在合法地址范围 是不是栈保护页 还没有被映射
+  if( va < p->sz && PGROUNDDOWN(va)  != r_sp() 
+    && ( ((pte = walk(p->pagetable, va, 0)) == 0 ) || ((*pte & PTE_V) == 0)) ){
+    return 1;
+  }else {
+    if (PGROUNDDOWN(va) == r_sp()) {
+      printf("va = 0x%p: 该页是栈保护页，不应被 Lazy Allocation 分配\n", va);
+    }
+    return 0;
+  }
+}
+
+
+// 为懒分配的虚拟地址增加物理内存映射
+void
+uvmLazyMaping(uint64 va){
+  struct proc *p = myproc();
+  char* pa;
+  if ((pa = kalloc()) == 0) {  // **kalloc 失败**
+    printf("lazy alloc : failed to alloc physical mem!");
+    p->killed = 1;
+  } else { // 下面是原来growproc中调用uvmalloc的内部实现
+    /*
+    memset(mem, 0, PGSIZE);
+    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      kfree(mem);
+      uvmdealloc(pagetable, a, oldsz);
+      return 0;
+    }
+      */
+    memset(pa, 0, PGSIZE);
+    if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_X | PTE_U) != 0) {
+      kfree(pa);
+      p->killed = 1;
+    }
+
+  }
 }
