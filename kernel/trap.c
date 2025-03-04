@@ -67,6 +67,16 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 13 || r_scause() == 15) {
+    uint64 wrong_addr = r_stval();
+
+    if( wrong_addr >= p->sz )
+    {
+      p->killed = 1;
+    }
+    if( Is_cowpage(PGROUNDDOWN(wrong_addr)) == 0) p->killed = 1;
+    if(cow_alloc(PGROUNDDOWN(wrong_addr)) != 0) p->killed = 1;
+
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
