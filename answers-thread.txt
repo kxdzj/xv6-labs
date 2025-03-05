@@ -1,0 +1,26 @@
+为什么两个线程都丢失了键，而不是一个线程？确定可能导致键丢失的具有2个线程的事件序列
+    因为多线程的情况下，当a线程往哈希表插入值的时候，b线程也往哈希表插入值，就会覆盖掉
+而另一方面a也可能会覆盖b的插入值，但是它们查的时候又会查所有的值，所以当然会丢失了
+
+static 
+void put(int key, int value)
+{
+  int i = key % NBUCKET;
+
+  // is the key already present?
+  struct entry *e = 0;
+  for (e = table[i]; e != 0; e = e->next) {
+    if (e->key == key)
+      break;
+  }
+  if(e){
+    // update the existing key.
+    e->value = value;
+  } else {
+    // the new is new.
+    insert(key, value, &table[i], table[i]);
+  }
+}
+
+
+如何解决？加锁即可
