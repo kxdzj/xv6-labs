@@ -197,6 +197,7 @@ cow_alloc(uint64 va){
     }
 
     kfree((char*)PGROUNDDOWN(pa));
+    // 这里会减少原来COW页面的计数
     return 0;
   }
 

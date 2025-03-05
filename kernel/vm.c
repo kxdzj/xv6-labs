@@ -320,7 +320,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
-    if(*pte & PTE_W){ // 清楚父进程的写标志位，并设置为COW位
+    if(*pte & PTE_W){ // 清除父进程的写标志位，并设置为COW位
 
       *pte = (*pte & ~PTE_W) | PTE_COW;
 
