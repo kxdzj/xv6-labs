@@ -18,15 +18,54 @@ struct run {
   struct run *next;
 };
 
+struct spinlock stealock;
+
 struct {
   struct spinlock lock;
+  // struct spinlock stealock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
+
+
+
+// static unsigned long rand_seed = 1;
+
+// unsigned int
+// random(void) {
+//   rand_seed = rand_seed * 1664525 + 1013904223;  // LCG 公式
+//   return (rand_seed >> 16) & 0x7FFF;  // 取低 15 位
+// }
+
+// uint64
+// ticks_since_boot() {
+//   return r_time();  // 读取当前 ticks
+// }
+
+// void
+// delay_ticks(int ticks) {
+//   uint64 start = ticks_since_boot();  // 读取当前时间
+//   while (ticks_since_boot() - start < ticks) {
+//     asm volatile("nop");  // 空操作，防止编译器优化掉
+//   }
+// }
+
+
+
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+
+  // char lockname[8];
+  // char stealockname[11];
+  for(int i=0; i< NCPU;++i){
+    // snprintf(lockname, sizeof(lockname), "kmem_%d", i);
+    // snprintf(stealockname, sizeof(stealockname), "stealk_%d", i);
+    initlock(&kmem[i].lock, "kmem_lock");
+    // initlock(&kmem[i].stealock, stealockname);
+  }
+  initlock(&stealock, "stealock");
+
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -55,28 +94,82 @@ kfree(void *pa)
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
+  int id = cpuid(); 
+  push_off(); // 关闭中断
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  acquire(&kmem[id].lock);
+  r->next = kmem[id].freelist;
+  kmem[id].freelist = r;
+  release(&kmem[id].lock);
+
+  pop_off();
 }
 
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
+// 使用属于cpu的空闲链表锁，但是没有可分配内存的时候就需要借
 void *
 kalloc(void)
 {
   struct run *r;
+  int id = cpuid();
+  push_off();
+  acquire(&kmem[id].lock);
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
-  if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+  r = kmem[id].freelist;
+  if (r)
+    kmem[id].freelist = r->next;
+  else {
+    int steal_id;
+    // for (int i = 0; i < NCPU ; i++) {  
+    //   steal_id = i; 
+    //   if(steal_id == id) continue;
 
-  if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
+    //   // acquire(&stealock);
+
+    //   acquire(&kmem[steal_id].lock);
+    //   r = kmem[steal_id].freelist;
+    //   if (r) {
+    //     kmem[steal_id].freelist = r->next;
+    //     release(&kmem[steal_id].lock);
+    //     break;
+    //   }
+    //   release(&kmem[steal_id].lock);
+
+    //   // release(&stealock);
+    // }
+    for (steal_id = id + 1; steal_id < NCPU; steal_id++) {
+      acquire(&kmem[steal_id].lock);
+      if (kmem[steal_id].freelist) {
+          r = kmem[steal_id].freelist;
+          kmem[steal_id].freelist = r->next;
+          release(&kmem[steal_id].lock);
+          break;
+      }
+      release(&kmem[steal_id].lock);
+    }
+      if (!r) {
+        for (int steal_id = 0; steal_id < id; steal_id++) {
+            if(steal_id == id) continue;
+            acquire(&kmem[steal_id].lock);
+            if (kmem[steal_id].freelist) {
+                r = kmem[steal_id].freelist;
+                kmem[steal_id].freelist = r->next;
+                release(&kmem[steal_id].lock);
+                break;
+            }
+            release(&kmem[steal_id].lock);
+        }
+    }
+  
+  }
+
+  release(&kmem[id].lock);
+  pop_off();
+
+  if (r)
+    memset((char*)r, 5, PGSIZE); // 填充 junk 数据
   return (void*)r;
 }
+

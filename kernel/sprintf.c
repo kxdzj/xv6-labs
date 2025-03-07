@@ -44,6 +44,8 @@ sprintint(char *s, int xx, int base, int sign)
   return n;
 }
 
+// 格式化字符串
+// 字符串缓冲区 缓冲区大小 需要被格式化的字符串 可变参数列表
 int
 snprintf(char *buf, int sz, char *fmt, ...)
 {
