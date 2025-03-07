@@ -380,20 +380,22 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
-  if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
+  // 直接索引
+  if (bn < NDIRECT) {
+    if ((addr = ip->addrs[bn]) == 0)
       ip->addrs[bn] = addr = balloc(ip->dev);
     return addr;
   }
+
   bn -= NDIRECT;
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+  // 一级间接索引 (第一个间接块)
+  if (bn < NINDIRECT) {
+    if ((addr = ip->addrs[NDIRECT]) == 0)
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
+    if ((addr = a[bn]) == 0) {
       a[bn] = addr = balloc(ip->dev);
       log_write(bp);
     }
@@ -401,8 +403,58 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  bn -= NINDIRECT;
+
+  // 一级间接索引 (第二个间接块)
+  // if (bn < NINDIRECT) {
+  //   if ((addr = ip->addrs[NDIRECT + 1]) == 0)
+  //     ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+  //   bp = bread(ip->dev, addr);
+  //   a = (uint*)bp->data;
+  //   if ((addr = a[bn]) == 0) {
+  //     a[bn] = addr = balloc(ip->dev);
+  //     log_write(bp);
+  //   }
+  //   brelse(bp);
+  //   return addr;
+  // }
+
+  // bn -= NINDIRECT;
+
+  // 二级索引
+  if (bn < NINDIRECT * NINDIRECT) {
+    // 先获取二级索引块地址
+    if ((addr = ip->addrs[NDIRECT + 1]) == 0)
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 找到存放bn号块的一级间接块
+    if ((addr = a[bn / NINDIRECT]) == 0) {
+      a[bn / NINDIRECT] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+
+    // 读取这个一级间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 找到 `bn` 号数据块
+    bn = bn % NINDIRECT;
+    if ((addr = a[bn]) == 0) {
+      a[bn] = addr = balloc(ip->dev);
+      log_write(bp);
+    }
+    brelse(bp);
+    
+    return addr;
+  }
+
   panic("bmap: out of range");
 }
+
 
 // Truncate inode (discard contents).
 // Caller must hold ip->lock.
@@ -411,7 +463,9 @@ itrunc(struct inode *ip)
 {
   int i, j;
   struct buf *bp;
+  struct buf *bp1, *bp2;
   uint *a;
+  uint *a1,*a2;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -420,7 +474,7 @@ itrunc(struct inode *ip)
     }
   }
 
-  if(ip->addrs[NDIRECT]){
+  if(ip->addrs[NDIRECT]){//清楚一级索引里面的东西
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
     for(j = 0; j < NINDIRECT; j++){
@@ -430,6 +484,39 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // if(ip->addrs[NDIRECT+1]){//清楚一级索引里面的东西
+  //   bp = bread(ip->dev, ip->addrs[NDIRECT+1]);
+  //   a = (uint*)bp->data;
+  //   for(j = 0; j < NINDIRECT; j++){
+  //     if(a[j])
+  //       bfree(ip->dev, a[j]);
+  //   }
+  //   brelse(bp);
+  //   bfree(ip->dev, ip->addrs[NDIRECT+1]);
+  //   ip->addrs[NDIRECT+1] = 0;
+  // }
+
+  if(ip->addrs[NDIRECT+1]){//清除二级索引里面的东西
+    bp1 = bread(ip->dev, ip->addrs[NDIRECT+1]);
+    a1 = (uint*)bp1->data;
+    for(int j=0; j < NINDIRECT; ++j){
+      if(a1[j]){
+          bp2 = bread(ip->dev, a1[j]);
+          a2 = (uint*)bp2->data;
+          for(int k=0;k<NINDIRECT;++k){
+            if(a2[k]){
+              bfree(ip->dev, a2[k]);
+            }
+          }
+          brelse(bp2);
+          bfree(ip->dev, a1[j]);
+      }
+    }
+    brelse(bp1);
+    bfree(ip->dev, ip->addrs[NDIRECT+1]);
+    ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
