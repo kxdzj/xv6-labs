@@ -102,19 +102,73 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
-  
+  acquire(&e1000_lock);
+  uint32 tdt = regs[E1000_TDT]; // TX Descripotr Tail
+  struct tx_desc* desc = &tx_ring[tdt];
+  if(!(desc->status && E1000_TXD_STAT_DD)){
+    release(&e1000_lock);
+    return -1;
+  }
+  // 如果这个下标对应的内存还有发送完毕但没有释放的，则释放
+  if(tx_mbufs[tdt]){
+    mbuffree(tx_mbufs[tdt]);
+    tx_mbufs[tdt] = 0;
+  }
+  // 保存新mbuf的指针，再次用到下标的时候释放
+  tx_mbufs[tdt] = m;
+  desc->addr = (uint64)m->head;
+  desc->length = m->len;
+
+  //   /* Transmit Descriptor command definitions [E1000 3.3.3.1] */
+  // #define E1000_TXD_CMD_EOP    0x01 /* End of Packet */
+  // #define E1000_TXD_CMD_RS     0x08 /* Report Status */
+  desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;  // 发送命令
+  desc->status = 0;
+  // 环形缓冲区下标+1
+  regs[E1000_TDT] = (regs[E1000_TDT] + 1)% TX_RING_SIZE;
+
+  release(&e1000_lock);
+
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
+
+
   //
   // Your code here.
   //
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+  // #define E1000_RDT      (0x02818/4)  /* RX Descriptor Tail - RW */
+  // acquire(&e1000_lock);
+  while(1){
+    uint32 rdt = ( regs[E1000_RDT] +  1)% RX_RING_SIZE;
+    struct rx_desc* desc = &rx_ring[rdt];
+    if(!(desc->status & E1000_RXD_STAT_DD)){
+      break;
+    }
+    struct mbuf* m = rx_mbufs[rdt];
+    m->len = desc->length;
+    net_rx(rx_mbufs[rdt]);
+
+    struct mbuf *new_buf = mbufalloc(0);
+    if(!new_buf){
+      panic("e1000_recv: out of memory!");
+    }
+
+    rx_mbufs[rdt] = new_buf;
+
+    desc->addr = (uint64)(rx_mbufs[rdt]->head);
+    desc->status = 0;
+
+    regs[E1000_RDT] = rdt;
+
+  }
+  // release(&e1000_lock);
 }
 
 void
