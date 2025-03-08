@@ -238,6 +238,7 @@ bad:
   return -1;
 }
 
+// 在文件系统中创建一个新的文件类型，并返回创建的inode指针
 static struct inode*
 create(char *path, short type, short major, short minor)
 {
@@ -283,6 +284,7 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+// 打开一个文件，返回文件描述符
 uint64
 sys_open(void)
 {
@@ -291,7 +293,7 @@ sys_open(void)
   struct file *f;
   struct inode *ip;
   int n;
-
+  // 获取文件路径和打开模式
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
 
@@ -303,17 +305,38 @@ sys_open(void)
       end_op();
       return -1;
     }
-  } else {
+  } else { // namei通过路径查找inode 
+    int symlink_depth = 0;
+    while(1){
+
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
     }
+
     ilock(ip);
+    if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+      if(++symlink_depth > 10){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      if(readi(ip, 0 ,(uint64)path, 0, MAXPATH) != MAXPATH){
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+    } else{
+        break; 
+      }
+    }
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
       return -1;
     }
+
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -322,6 +345,7 @@ sys_open(void)
     return -1;
   }
 
+   
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -482,5 +506,41 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// symlink(target, path) 
+// 需要在path处创建一个指向target的符号链接
+// 核心逻辑就是把target路径写到path对应的inode数据块中
+// 其中argstr->argaddr->argraw从寄存器拿数据
+uint64
+sys_symlink(void){
+
+  struct inode *ip;
+  char target[MAXPATH], path[MAXPATH];
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0){
+    return -1;
+  }
+  // 开始一个文件系统操作
+  begin_op();
+
+  // create函数负责创建文件或者目录，这里是符号链接的inode文件
+  ip = create(path, T_SYMLINK, 0 , 0);
+  if(ip == 0){
+    end_op();
+    return -1;
+  }
+  // 目标inode需要写入的文件 是否从用户空间读取数据 数据地址 写入偏移量
+  // 需要写入的字节数
+  if(writei(ip, 0, (uint64)target, 0, MAXPATH) < MAXPATH){
+    // 写入target，如果写入字节数小于MAXPATH
+    // 写入失败，释放iunlockput(ip)
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
   return 0;
 }
