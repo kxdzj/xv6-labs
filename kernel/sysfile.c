@@ -3,7 +3,6 @@
 // Mostly argument checking, since we don't trust
 // user code, and calls into file.c and fs.c.
 //
-
 #include "types.h"
 #include "riscv.h"
 #include "defs.h"
@@ -15,6 +14,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -484,3 +484,221 @@ sys_pipe(void)
   }
   return 0;
 }
+
+
+// 查找进程中包含虚拟地址的vma，并返回其指针
+struct vma*
+findvma(uint64 va){
+  struct proc* p = myproc();
+
+  for(int i=0;i<MAXVMANUM;++i){
+    struct vma *vv = &p->vmas[i];
+    if((vv->valid == 1) && (va >= vv->addr)  && (va < vv->addr + vv->len))
+    {
+      return vv;
+    }
+  }
+  return 0;
+}
+
+
+// 在进程的地址空间中找到一个未使用的区域来映射文件，并将VMA添加到进程的映射区域表中
+// void *mmap(void *addr, size_t length, int prot, int flags,
+//   int fd, off_t offset);
+// addr：建议的映射起始地址（可为 NULL，由内核决定）
+// length：映射区域的大小（以字节为单位）
+// prot：保护标志（如 PROT_READ、PROT_WRITE）
+// flags：映射选项（如 MAP_SHARED、MAP_PRIVATE）
+// fd：文件描述符，用于指定映射的文件
+// offset：文件内容的起始偏移量
+// 使用静态函数argfd同时解析文件描述符和struct file
+uint64
+sys_mmap(void){
+  uint64 addr, err = 0xffffffffffffffff;
+  int len, prot, flags, offset, fd;
+  struct file*  vfile;
+
+  if(argaddr(0, &addr) < 0 || argint(1, &len) <0 
+      || argint(2,&prot) <0 || argint(3,&flags) < 0 
+      || argfd(4, &fd, &vfile) < 0  || argint(5, &offset)  < 0 )
+  {
+    return err;
+  }
+  if( addr != 0 || offset != 0 || len < 0){
+    return err;
+  }
+  // peot & PROT_READ 表示是否请求读
+  // MAP_PRIVATE 允许创建私有映射，即写入不会影响原始文件，
+  // 因此即使不能写，在 MAP_PRIVATE 模式下仍然可以允许映射
+  if ((!vfile->readable && (prot & PROT_READ)) ||
+  (((!vfile->writable) && (prot & PROT_WRITE)) && !(flags & MAP_PRIVATE))) {
+  return err;
+}
+
+  
+  len = PGROUNDUP(len);
+
+  struct proc *p = myproc();
+  struct vma *v =  0;
+  uint64 vmaaddrend =  MMAPEND;
+  
+  for(int i=0;i<MAXVMANUM;++i){
+    struct vma *vv = &p->vmas[i];
+    if(vv->valid == 0){
+      if(v == 0){
+        v = &p->vmas[i];
+        v->valid = 1;
+      }
+    }else if(vv->addr < vmaaddrend){ // 找使用的vma，确保未使用的vma的地址应该在这之下
+      vmaaddrend = PGROUNDDOWN(vv->addr);
+    }
+  }
+
+  if(v == 0) panic("mmap : no free vma!");
+  
+  v->addr = vmaaddrend - len;
+  v->len  = len;
+  v->prot = prot;
+  v->vfile = vfile;
+  v->flags = flags;
+  v->offset = offset;
+  
+  // 增加文件引用计数
+  filedup(v->vfile);
+  
+  return v->addr;
+}
+
+
+
+// int  munmap(void *addr, size_t length);
+// addr 是指定需要解除映射的内存区域的起始地址，这个地址必须是之前通过 mmap 返回的地址
+// 指定要解除映射的区域的长度（以字节为单位）
+uint64
+sys_munmap(void){
+  uint64 addr, len;
+  if( argaddr(0, &addr) < 0 || argaddr(1, &len) < 0 || len == 0){
+    return -1;
+  }
+  struct proc* p = myproc();
+  struct vma *v = findvma(addr);
+  if(v == 0) {
+    return -1;
+  }
+  if( addr > v->addr && addr + len < v->addr + v->len){
+    return -1;
+  }
+  uint64 addr_aligned = addr;
+  if(addr > v->addr){
+    addr_aligned = PGROUNDUP(addr);
+  }
+  int nunmap = len - (addr_aligned - addr);
+  if(nunmap < 0) nunmap = 0;
+
+  vmaunmap(p->pagetable, addr_aligned, nunmap, v);
+
+
+  if(addr <= v->addr && addr + len > v->addr){
+    v->offset += addr +len - v->addr;
+    v->addr = addr + len;
+  }
+  v->len -= len;
+
+  if(v->len <= 0){
+    fileclose(v->vfile);
+    v->valid = 0;
+  }
+
+  return 0;
+}
+// uint64
+// sys_munmap(void) {
+//   uint64 addr;
+//   int length;
+//   if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+//     return -1;
+
+//   int i;
+//   struct proc* p = myproc();
+//   for(i = 0; i < MAXVMANUM; ++i) {
+//     if(p->vmas[i].valid && p->vmas[i].len >= length) {
+//       // 根据提示，munmap的地址范围只能是
+//       // 1. 起始位置
+//       if(p->vmas[i].addr == addr) {
+//         p->vmas[i].addr += length;
+//         p->vmas[i].len -= length;
+//         break;
+//       }
+//       // 2. 结束位置
+//       if(addr + length == p->vmas[i].addr + p->vmas[i].len) {
+//         p->vmas[i].len -= length;
+//         break;
+//       }
+//     }
+//   }
+//   if(i == MAXVMANUM)
+//     return -1;
+
+//   // 将MAP_SHARED页面写回文件系统
+//   if(p->vmas[i].flags == MAP_SHARED && (p->vmas[i].prot & PROT_WRITE) != 0) {
+//     filewrite(p->vmas[i].vfile, addr, length);
+//   }
+
+//   // 判断此页面是否存在映射
+//   uvmunmap(p->pagetable, addr, length / PGSIZE, 1);
+
+
+//   // 当前VMA中全部映射都被取消
+//   if(p->vmas[i].len == 0) {
+//     fileclose(p->vmas[i].vfile);
+//     p->vmas[i].valid = 0;
+//   }
+
+//   return 0;
+// }
+
+
+// 按懒加载需要分配物理页并且映射，需要懒加载且成功返回0，否则-1
+int
+vmatraylazy_touch(uint64 va){
+ 
+  struct proc* p = myproc();
+  struct vma* v = findvma(va);
+  
+  if(v==0){
+    return -1;
+  }
+  // 分配一个物理页
+  void* pa = kalloc();
+  if(pa == 0){
+    panic("vmatraylazy_touch failed! cause : kalloc failed!");
+    return -1;
+  }
+  
+  memset(pa, 0, PGSIZE);
+  // 开始文件系统操作
+  begin_op();
+
+  // 获取文件的锁
+  ilock(v->vfile->ip);
+  // readi() 读取文件数据
+  
+  readi(v->vfile->ip, 0, (uint64)pa, v->offset + PGROUNDDOWN(va - v->addr), PGSIZE);
+  
+  iunlock(v->vfile->ip);
+  end_op();
+
+  int perm = PTE_U;
+  if( v->prot & PROT_READ) perm |= PTE_R;
+  if( v->prot & PROT_WRITE) perm |= PTE_W;
+  if( v->prot & PROT_EXEC)  perm |= PTE_X;
+  
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)pa, perm) < 0)
+  {
+    kfree(pa);
+    panic("vmatraplazy_touch failed!");
+    return -1;
+  }
+  return 0;
+}
+

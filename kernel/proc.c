@@ -101,6 +101,8 @@ allocproc(void)
 {
   struct proc *p;
 
+
+
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
@@ -134,6 +136,10 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  for(int i=0;i<MAXVMANUM;i++) {
+    p->vmas[i].valid = 0;
+  }
+
   return p;
 }
 
@@ -146,6 +152,12 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+
+  for(int i = 0; i < MAXVMANUM; i++) {
+    struct vma *v = &p->vmas[i];
+    vmaunmap(p->pagetable, v->addr, v->len, v);
+  }
+
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -295,6 +307,16 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+
+   // 复制父进程的VMA
+   for(i = 0; i < MAXVMANUM; ++i) {
+    if(p->vmas[i].valid) {
+      memmove(&np->vmas[i], &p->vmas[i], sizeof(p->vmas[i]));
+      filedup(p->vmas[i].vfile);
+    }
+  }
+
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 

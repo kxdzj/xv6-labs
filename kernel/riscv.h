@@ -331,6 +331,10 @@ sfence_vma()
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // 1 -> user can access
+// #define PTE_D (1L << 6) //  也会报错，会在fork那里报错，panic:acquire
+#define PTE_D  (1L << 7) // DIRTY 如果被设置，则代表该页被修改过，需要将其写回磁盘
+// #define PTE_D  (1L << 8)  // 会报错,在dirty写回测试那里报错
+
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

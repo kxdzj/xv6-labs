@@ -49,6 +49,7 @@
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
+// 跳板页面
 #define TRAMPOLINE (MAXVA - PGSIZE)
 
 // map kernel stacks beneath the trampoline,
@@ -65,3 +66,7 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+// 定义一下MMAP可以使用的最后一个页
+#define MMAPEND (TRAPFRAME - PGSIZE)
+

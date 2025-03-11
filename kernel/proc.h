@@ -80,6 +80,22 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
+
+#define MAXVMANUM  16
+
+struct vma {
+
+  int valid;  // 有效位
+  uint64 addr; // 起始地址
+  uint len; // 长度
+  int prot; // 权限位
+  int flags; // 标志位
+  struct file*  vfile; // 对应文件 
+  uint64 offset;  // 偏移量
+
+};
+
+
 enum procstate { UNUSED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -103,4 +119,5 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  struct vma vmas[MAXVMANUM];   //
 };
